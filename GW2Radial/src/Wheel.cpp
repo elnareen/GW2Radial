@@ -50,10 +50,10 @@ Wheel::Wheel(uint bgResourceId, uint wipeMaskResourceId, std::string nickname, s
 	backgroundTexture_ = CreateTextureFromResource(dev, Core::i()->dllModule(), bgResourceId);
 	wipeMaskTexture_ = CreateTextureFromResource(dev, Core::i()->dllModule(), wipeMaskResourceId);
 	
-	mouseMoveCallback_ = [this]() { return OnMouseMove(); };
-	Input::i()->AddMouseMoveCallback(&mouseMoveCallback_);
-	inputChangeCallback_ = [this](bool changed, const std::set<ScanCode>& scs, const std::list<EventKey>& changedKeys) { return OnInputChange(changed, scs, changedKeys); };
-	Input::i()->AddInputChangeCallback(&inputChangeCallback_);
+	mouseMoveCallback_ = std::make_unique<Input::MouseMoveCallback>([this](bool& rv) { OnMouseMove(rv); });
+	Input::i()->AddMouseMoveCallback(mouseMoveCallback_.get());
+	inputChangeCallback_ = std::make_unique<Input::InputChangeCallback>([this](bool changed, const ScanCodeSet& scs, const std::list<EventKey>& changedKeys, InputResponse& response) { OnInputChange(changed, scs, changedKeys, response); });
+	Input::i()->AddInputChangeCallback(inputChangeCallback_.get());
 
 	SettingsMenu::i()->AddImplementer(this);
 }
@@ -62,8 +62,8 @@ Wheel::~Wheel()
 {
 	if(auto i = Input::iNoInit(); i)
 	{
-		i->RemoveMouseMoveCallback(&mouseMoveCallback_);
-		i->RemoveInputChangeCallback(&inputChangeCallback_);
+		i->RemoveMouseMoveCallback(mouseMoveCallback_.get());
+		i->RemoveInputChangeCallback(inputChangeCallback_.get());
 	}
 	
 	if(auto i = SettingsMenu::iNoInit(); i)
@@ -629,7 +629,7 @@ std::vector<WheelElement*> Wheel::GetActiveElements(bool sorted)
 	return elems;
 }
 
-bool Wheel::OnMouseMove()
+void Wheel::OnMouseMove(bool& rv)
 {
 	if(isVisible_)
 	{
@@ -640,17 +640,60 @@ bool Wheel::OnMouseMove()
 			DeactivateWheel();
 	}
 
-	return isVisible_ && lockCameraWhenOverlayedOption_.value();
+	rv |= isVisible_ && lockCameraWhenOverlayedOption_.value();
 }
 
-InputResponse Wheel::OnInputChange(bool changed, const std::set<ScanCode>& scs, const std::list<EventKey>& changedKeys)
+void Wheel::OnInputChange(bool changed, const ScanCodeSet& scs, const std::list<EventKey>& changedKeys, InputResponse& response)
 {
+	if (SettingsMenu::i()->isVisible()) {
+		bool isAnyElementBeingModified = keybind_.isBeingModified() || centralKeybind_.isBeingModified() ||
+			std::any_of(wheelElements_.begin(), wheelElements_.end(),
+													[](cref we) { return we->keybind().isBeingModified(); });
+
+		if (isAnyElementBeingModified) 	{
+			// If a key was lifted, we consider the key combination *prior* to this key being lifted as the keybind
+			bool keyLifted = false;
+			auto fullKeybind = scs;
+
+			// Explicitly filter out M1 (left mouse button) from keybinds since it breaks too many things
+			fullKeybind.erase(ScanCode::LBUTTON);
+
+			for (cref ek : changedKeys) {
+				if (IsSame(ek.sc, ScanCode::LBUTTON))
+					continue;
+
+				if (!ek.down) {
+					fullKeybind.insert(ek.sc);
+					keyLifted = true;
+				}
+			}
+
+
+			keybind_.scanCodes(fullKeybind);
+			centralKeybind_.scanCodes(fullKeybind);
+
+			if (keyLifted) {
+				keybind_.isBeingModified(false);
+				centralKeybind_.isBeingModified(false);
+			}
+
+			for (auto& we : wheelElements_) {
+				we->keybind().scanCodes(fullKeybind);
+				if (keyLifted)
+					we->keybind().isBeingModified(false);
+			}
+
+			response = InputResponse::PREVENT_ALL;
+		}
+
+		return;
+	}
+
 	const bool previousVisibility = isVisible_;
 
 	if (MumbleLink::i()->isMapOpen())
 		isVisible_ = false;
 	else {
-
 		bool mountOverlay = (!enableConditionsOption_.value() || keybind_.conditionsFulfilled()) && keybind_.matchesPartial(scs);
 		bool mountOverlayLocked = (!enableConditionsOption_.value() || centralKeybind_.conditionsFulfilled()) && centralKeybind_.matchesPartial(scs);
 
@@ -680,57 +723,9 @@ InputResponse Wheel::OnInputChange(bool changed, const std::set<ScanCode>& scs, 
 
 	if (!isVisible_ && previousVisibility)
 		DeactivateWheel();
-	
-	{
-		const auto isAnyElementBeingModified = std::any_of(wheelElements_.begin(), wheelElements_.end(),
-			[](cref we) { return we->keybind().isBeingModified(); });
-
-		{
-			// If a key was lifted, we consider the key combination *prior* to this key being lifted as the keybind
-			bool keyLifted = false;
-			auto fullKeybind = scs;
-
-			// Explicitly filter out M1 (left mouse button) from keybinds since it breaks too many things
-			fullKeybind.erase(ScanCode::LBUTTON);
-
-			for (cref ek : changedKeys)
-			{
-				if(IsSame(ek.sc, ScanCode::LBUTTON))
-					continue;
-
-				if (!ek.down)
-				{
-					fullKeybind.insert(ek.sc);
-					keyLifted = true;
-				}
-			}
-
-
-			keybind_.scanCodes(fullKeybind);
-			centralKeybind_.scanCodes(fullKeybind);
-
-			if(keyLifted)
-			{
-				keybind_.isBeingModified(false);	
-				centralKeybind_.isBeingModified(false);	
-			}
-
-			for (auto& we : wheelElements_)
-			{
-				we->keybind().scanCodes(fullKeybind);
-				if(keyLifted)
-					we->keybind().isBeingModified(false);	
-			}
-		}
-
-		if(isAnyElementBeingModified)
-			return InputResponse::PREVENT_ALL;
-	}
 
 	if(clickSelectOption_.value() && !isVisible_ && previousVisibility)
-		return InputResponse::PREVENT_ALL;
-	
-	return InputResponse::PASS_TO_GAME;
+		response = InputResponse::PREVENT_ALL;
 }
 
 void Wheel::ActivateWheel(bool isMountOverlayLocked)
@@ -809,7 +804,7 @@ void Wheel::DeactivateWheel()
 
 void Wheel::SendKeybindOrDelay(WheelElement* we, std::optional<Point> mousePos) {
 	if (aboveWater_.delayed() || outOfCombat_.delayed()) {
-		Input::i()->SendKeybind(std::set<ScanCode>(), cursorResetPosition_);
+		Input::i()->SendKeybind(ScanCodeSet(), cursorResetPosition_);
 		conditionallyDelayed_ = we;
 		conditionallyDelayedTime_ = TimeInMilliseconds();
 		conditionallyDelayedTestCount_ = 0;

@@ -203,23 +203,53 @@ enum class ScanCode : uint {
     MAX_VAL = (1u << 31) - 1 // 31 bits to fit in EventKey struct
 };
 using ScanCode_t = std::underlying_type_t<ScanCode>;
+
+enum class Modifier : ushort {
+    NONE = 0,
+
+    LCTRL = 1,
+    RCTRL = 2,
+    CTRL = LCTRL | RCTRL,
+
+    LALT = 4,
+    RALT = 8,
+    ALT = LALT | RALT,
+
+    LSHIFT = 16,
+    RSHIFT = 32,
+    SHIFT = LSHIFT | RSHIFT,
+};
+using Modifier_t = std::underlying_type_t<Modifier>;
 }
 
-constexpr GW2Radial::ScanCode operator&(const GW2Radial::ScanCode& a, const GW2Radial::ScanCode& b) {
+constexpr GW2Radial::Modifier operator&(GW2Radial::Modifier a, GW2Radial::Modifier b) {
+    return GW2Radial::Modifier(GW2Radial::Modifier_t(a) & GW2Radial::Modifier_t(b));
+}
+
+constexpr GW2Radial::Modifier operator|(GW2Radial::Modifier a, GW2Radial::Modifier b) {
+    return GW2Radial::Modifier(GW2Radial::Modifier_t(a) | GW2Radial::Modifier_t(b));
+}
+
+constexpr GW2Radial::Modifier operator~(GW2Radial::Modifier a) {
+    return GW2Radial::Modifier(~GW2Radial::Modifier_t(a));
+}
+
+
+constexpr GW2Radial::ScanCode operator&(GW2Radial::ScanCode a, GW2Radial::ScanCode b) {
     return GW2Radial::ScanCode(GW2Radial::ScanCode_t(a) & GW2Radial::ScanCode_t(b));
 }
 
-constexpr GW2Radial::ScanCode operator|(const GW2Radial::ScanCode& a, const GW2Radial::ScanCode& b) {
+constexpr GW2Radial::ScanCode operator|(GW2Radial::ScanCode a, GW2Radial::ScanCode b) {
     return GW2Radial::ScanCode(GW2Radial::ScanCode_t(a) | GW2Radial::ScanCode_t(b));
 }
 
-constexpr GW2Radial::ScanCode operator~(const GW2Radial::ScanCode& a) {
+constexpr GW2Radial::ScanCode operator~(GW2Radial::ScanCode a) {
     return GW2Radial::ScanCode(~GW2Radial::ScanCode_t(a));
 }
 
 namespace GW2Radial {
 
-inline bool IsModifier(const ScanCode& a) {
+inline bool IsModifier(ScanCode a) {
     switch (a) {
     case ScanCode::SHIFTLEFT:
     case ScanCode::SHIFTRIGHT:
@@ -239,7 +269,32 @@ inline bool IsModifier(const ScanCode& a) {
     }
 }
 
-inline bool IsExtendedKey(const ScanCode& a) {
+inline Modifier ToModifier(ScanCode a) {
+    switch (a) {
+    case ScanCode::SHIFTLEFT:
+        return Modifier::LSHIFT;
+    case ScanCode::SHIFTRIGHT:
+        return Modifier::RSHIFT;
+    case ScanCode::SHIFT:
+        return Modifier::SHIFT;
+    case ScanCode::CONTROLLEFT:
+        return Modifier::LCTRL;
+    case ScanCode::CONTROLRIGHT:
+        return Modifier::RCTRL;
+    case ScanCode::CONTROL:
+        return Modifier::CTRL;
+    case ScanCode::ALTLEFT:
+        return Modifier::LALT;
+    case ScanCode::ALTRIGHT:
+        return Modifier::RALT;
+    case ScanCode::ALT:
+        return Modifier::ALT;
+    default:
+        return Modifier::NONE;
+    }
+}
+
+inline bool IsExtendedKey(ScanCode a) {
     switch (a) {
     case ScanCode::SHIFTRIGHT:
     case ScanCode::CONTROLRIGHT:
@@ -287,6 +342,25 @@ inline ScanCode MakeUniversal(const ScanCode& a) {
     }
 }
 
+inline Modifier MakeUniversal(const Modifier& a) {
+    switch (a) {
+    case Modifier::LSHIFT:
+    case Modifier::RSHIFT:
+    case Modifier::SHIFT:
+        return Modifier::SHIFT;
+    case Modifier::LCTRL:
+    case Modifier::RCTRL:
+    case Modifier::CTRL:
+        return Modifier::CTRL;
+    case Modifier::LALT:
+    case Modifier::RALT:
+    case Modifier::ALT:
+        return Modifier::ALT;
+    default:
+        return a;
+    }
+}
+
 constexpr bool IsUniversalModifier(const ScanCode& a) {
     return (ScanCode_t(a) & ScanCode_t(ScanCode::UNIVERSAL_MODIFIER_FLAG)) != ScanCode_t(ScanCode::NONE);
 }
@@ -295,28 +369,28 @@ std::wstring GetScanCodeName(ScanCode scanCode);
 
 constexpr bool IsSame(const GW2Radial::ScanCode& a, const GW2Radial::ScanCode& b) {
     if (IsUniversalModifier(a) || IsUniversalModifier(b)) {
-        ScanCode_t b2 = ScanCode_t(b);
         switch (a) {
         case ScanCode::SHIFTLEFT:
         case ScanCode::SHIFTRIGHT:
         case ScanCode::SHIFT:
-            return b2 == ScanCode_t(ScanCode::SHIFTLEFT) || b2 == ScanCode_t(ScanCode::SHIFTRIGHT) || b2 == ScanCode_t(ScanCode::SHIFT);
+            return b == ScanCode::SHIFTLEFT || b == ScanCode::SHIFTRIGHT || b == ScanCode::SHIFT;
         case ScanCode::CONTROLLEFT:
         case ScanCode::CONTROLRIGHT:
         case ScanCode::CONTROL:
-            return b2 == ScanCode_t(ScanCode::CONTROLLEFT) || b2 == ScanCode_t(ScanCode::CONTROLRIGHT) || b2 == ScanCode_t(ScanCode::CONTROL);
+            return b == ScanCode::CONTROLLEFT || b == ScanCode::CONTROLRIGHT || b == ScanCode::CONTROL;
         case ScanCode::ALTLEFT:
         case ScanCode::ALTRIGHT:
         case ScanCode::ALT:
-            return b2 == ScanCode_t(ScanCode::ALTLEFT) || b2 == ScanCode_t(ScanCode::ALTRIGHT) || b2 == ScanCode_t(ScanCode::ALT);
+            return b == ScanCode::ALTLEFT || b == ScanCode::ALTRIGHT || b == ScanCode::ALT;
         case ScanCode::METALEFT:
         case ScanCode::METARIGHT:
         case ScanCode::META:
-            return b2 == ScanCode_t(ScanCode::METALEFT) || b2 == ScanCode_t(ScanCode::METARIGHT) || b2 == ScanCode_t(ScanCode::META);
+            return b == ScanCode::METALEFT || b == ScanCode::METARIGHT || b == ScanCode::META;
         }
     }
 
-    return ScanCode_t(a) == ScanCode_t(b);
+    bool c = a == b;
+    return c;
 }
 
 struct KeyLParam {
@@ -334,6 +408,9 @@ struct KeyLParam {
 };
 
 ScanCode GetScanCode(KeyLParam lParam);
+inline ScanCode GetScanCodeFromVirtualKey(uint vk) {
+    return ScanCode(MapVirtualKey(vk, MAPVK_VK_TO_VSC));
+}
 
 inline bool IsMouse(ScanCode sc) {
     return (sc & ScanCode::MOUSE_FLAG) != ScanCode::NONE;
@@ -341,7 +418,11 @@ inline bool IsMouse(ScanCode sc) {
 
 struct ScanCodeCompare
 {
-    bool operator()(const ScanCode& a, const ScanCode& b) const
+    bool operator()(const ScanCode& a, const ScanCode& b) const {
+        return Compare(a, b);
+    }
+
+    static bool Compare(const ScanCode& a, const ScanCode& b)
     {
         bool aIsModifier = IsModifier(a);
         bool bIsModifier = IsModifier(b);
@@ -389,15 +470,8 @@ struct ScanCodeCompare
         }
 
         // If two ScanCodes are of the same type, compare numerically
-        return uint(a) < uint(b);
+        return ScanCode_t(a) < ScanCode_t(b);
     }
 };
 
-}
-
-inline constexpr bool operator==(const GW2Radial::ScanCode& a, const GW2Radial::ScanCode& b) {
-    return GW2Radial::IsSame(a, b);
-}
-inline constexpr bool operator!=(const GW2Radial::ScanCode& a, const GW2Radial::ScanCode& b) {
-    return !GW2Radial::IsSame(a, b);
 }
